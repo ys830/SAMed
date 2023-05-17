@@ -9,7 +9,7 @@ import torch.nn.functional as F
 import imageio
 from einops import repeat
 from icecream import ic
-
+import cv2
 
 class Focal_loss(nn.Module):
     def __init__(self, alpha=0.25, gamma=2, num_classes=3, size_average=True):
@@ -167,14 +167,90 @@ def test_single_volume(image, label, net, classes, multimask_output, patch_size=
     for i in range(1, classes + 1):
         metric_list.append(calculate_metric_percase(prediction == i, label == i))
 
+    # if test_save_path is not None:
+    #     img_itk = sitk.GetImageFromArray(image.astype(np.float32))
+    #     prd_itk = sitk.GetImageFromArray(prediction.astype(np.float32))
+    #     lab_itk = sitk.GetImageFromArray(label.astype(np.float32))
+    #     img_itk.SetSpacing((1, 1, z_spacing))
+    #     prd_itk.SetSpacing((1, 1, z_spacing))
+    #     lab_itk.SetSpacing((1, 1, z_spacing))
+    #     sitk.WriteImage(prd_itk, test_save_path + '/' + case + "_pred.nii.gz")
+    #     sitk.WriteImage(img_itk, test_save_path + '/' + case + "_img.nii.gz")
+    #     sitk.WriteImage(lab_itk, test_save_path + '/' + case + "_gt.nii.gz")
     if test_save_path is not None:
-        img_itk = sitk.GetImageFromArray(image.astype(np.float32))
-        prd_itk = sitk.GetImageFromArray(prediction.astype(np.float32))
-        lab_itk = sitk.GetImageFromArray(label.astype(np.float32))
-        img_itk.SetSpacing((1, 1, z_spacing))
-        prd_itk.SetSpacing((1, 1, z_spacing))
-        lab_itk.SetSpacing((1, 1, z_spacing))
-        sitk.WriteImage(prd_itk, test_save_path + '/' + case + "_pred.nii.gz")
-        sitk.WriteImage(img_itk, test_save_path + '/' + case + "_img.nii.gz")
-        sitk.WriteImage(lab_itk, test_save_path + '/' + case + "_gt.nii.gz")
+        image = image.astype(np.float32).squeeze(0)*255
+        prediction = prediction.astype(np.uint8).squeeze(0)*255
+        label = label.astype(np.uint8).squeeze(0)*255
+
+        _, binary_mask = cv2.threshold(prediction, 1, 255, cv2.THRESH_BINARY)
+        contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        marked_image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)  # 将图像转换为BGR格式
+        cv2.drawContours(marked_image, contours, -1, (0, 0, 255), 2)  # 绘制红色外轮廓
+
+
+        cv2.imwrite(test_save_path + '/' + case + "_img.png", image)
+        cv2.imwrite(test_save_path + '/' + case + "_pred.png", prediction)
+        cv2.imwrite(test_save_path + '/' + case + "_gt.png", label)
+        cv2.imwrite(test_save_path + '/' + case + "_add.png", marked_image)
+
     return metric_list
+
+def val_single_volume(image, net, classes, multimask_output, patch_size=[256, 256], input_size=[224, 224],
+                       test_save_path=None, case=None, z_spacing=1):
+    image = image.squeeze(0).cpu().detach().numpy()
+    if len(image.shape) == 3:
+        prediction = np.zeros_like(image)
+        for ind in range(image.shape[0]):
+            slice = image[ind, :, :]
+            x, y = slice.shape[0], slice.shape[1]
+            if x != input_size[0] or y != input_size[1]:
+                slice = zoom(slice, (input_size[0] / x, input_size[1] / y), order=3)  # previous using 0
+            new_x, new_y = slice.shape[0], slice.shape[1]  # [input_size[0], input_size[1]]
+            if new_x != patch_size[0] or new_y != patch_size[1]:
+                slice = zoom(slice, (patch_size[0] / new_x, patch_size[1] / new_y), order=3)  # previous using 0, patch_size[0], patch_size[1]
+            inputs = torch.from_numpy(slice).unsqueeze(0).unsqueeze(0).float().cuda()
+            inputs = repeat(inputs, 'b c h w -> b (repeat c) h w', repeat=3)
+            net.eval()
+            with torch.no_grad():
+                outputs = net(inputs, multimask_output, patch_size[0])
+                output_masks = outputs['masks']
+                out = torch.argmax(torch.softmax(output_masks, dim=1), dim=1).squeeze(0)
+                out = out.cpu().detach().numpy()
+                out_h, out_w = out.shape
+                if x != out_h or y != out_w:
+                    pred = zoom(out, (x / out_h, y / out_w), order=0)
+                else:
+                    pred = out
+                prediction[ind] = pred
+
+    else:
+        x, y = image.shape[-2:]
+        if x != patch_size[0] or y != patch_size[1]:
+            image = zoom(image, (patch_size[0] / x, patch_size[1] / y), order=3)
+        inputs = torch.from_numpy(image).unsqueeze(
+            0).unsqueeze(0).float().cuda()
+        inputs = repeat(inputs, 'b c h w -> b (repeat c) h w', repeat=3)
+        net.eval()
+        with torch.no_grad():
+            outputs = net(inputs, multimask_output, patch_size[0])
+            output_masks = outputs['masks']
+            out = torch.argmax(torch.softmax(output_masks, dim=1), dim=1).squeeze(0)
+            prediction = out.cpu().detach().numpy()
+            if x != patch_size[0] or y != patch_size[1]:
+                prediction = zoom(prediction, (x / patch_size[0], y / patch_size[1]), order=0)
+
+    if test_save_path is not None:
+        image = image.astype(np.float32).squeeze(0)*255
+        prediction = prediction.astype(np.uint8).squeeze(0)*255
+
+        _, binary_mask = cv2.threshold(prediction, 1, 255, cv2.THRESH_BINARY)
+        contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        marked_image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)  # 将图像转换为BGR格式
+        cv2.drawContours(marked_image, contours, -1, (0, 0, 255), 2)  # 绘制红色外轮廓
+
+
+        cv2.imwrite(test_save_path + '/' + case + "_img.png", image)
+        cv2.imwrite(test_save_path + '/' + case + "_pred.png", prediction)
+        cv2.imwrite(test_save_path + '/' + case + "_add.png", marked_image)
+
+

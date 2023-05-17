@@ -127,3 +127,14 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+/output/
+/output_test/
+/checkpoints/
+/output_val/
+/output_test_2/
+/output_test_3/
+/512/
+/test512/
+/test_dataset/
+/lora_ckpt/

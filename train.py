@@ -11,19 +11,19 @@ from importlib import import_module
 from sam_lora_image_encoder import LoRA_Sam
 from segment_anything import sam_model_registry
 
-from trainer import trainer_synapse
+from trainer import trainer_synapse, trainer_camus
 from icecream import ic
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str,
-                    default='/data/LarryXu/Synapse/preprocessed_data/train_npz', help='root dir for data')
-parser.add_argument('--output', type=str, default='/output/sam/results')
+                    default='/data/yisi/mywork/SAMed/CAMUS', help='root dir for data')
+parser.add_argument('--output', type=str, default='output/sam_2/results')
 parser.add_argument('--dataset', type=str,
-                    default='Synapse', help='experiment_name')
+                    default='CAMUS', help='experiment_name')
 parser.add_argument('--list_dir', type=str,
                     default='./lists/lists_Synapse', help='list dir')
 parser.add_argument('--num_classes', type=int,
-                    default=8, help='output channel of network')
+                    default=2, help='output channel of network')
 parser.add_argument('--max_iterations', type=int,
                     default=30000, help='maximum epoch number to train')
 parser.add_argument('--max_epochs', type=int,
@@ -32,6 +32,11 @@ parser.add_argument('--stop_epoch', type=int,
                     default=160, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int,
                     default=12, help='batch_size per gpu')
+
+parser.add_argument('--train_start', type=int, default=0, help='inclusive')
+parser.add_argument('--train_end', type=int, default=-1, help='exclusive, -1 for all')
+parser.add_argument('--train_skip', type=int, default=2, help='skip every this number of imgs')
+
 parser.add_argument('--n_gpu', type=int, default=2, help='total gpu')
 parser.add_argument('--deterministic', type=int, default=1,
                     help='whether use deterministic training')
@@ -68,10 +73,16 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
     dataset_name = args.dataset
+    # dataset_config = {
+    #     'Synapse': {
+    #         'root_path': args.root_path,
+    #         'list_dir': args.list_dir,
+    #         'num_classes': args.num_classes,
+    #     }
+    # }
     dataset_config = {
-        'Synapse': {
+        'CAMUS': {
             'root_path': args.root_path,
-            'list_dir': args.list_dir,
             'num_classes': args.num_classes,
         }
     }
@@ -118,5 +129,6 @@ if __name__ == "__main__":
     with open(config_file, 'w') as f:
         f.writelines(config_items)
 
-    trainer = {'Synapse': trainer_synapse}
+    # trainer = {'Synapse': trainer_synapse}
+    trainer = {'CAMUS': trainer_camus}
     trainer[dataset_name](args, net, snapshot_path, multimask_output, low_res)
